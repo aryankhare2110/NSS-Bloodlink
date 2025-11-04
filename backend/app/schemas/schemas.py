@@ -102,3 +102,51 @@ class RequestWithHospital(RequestResponse):
     class Config:
         from_attributes = True
 
+# ============ Demand Forecast Schemas ============
+
+class DemandForecastResponse(BaseModel):
+    """Schema for demand forecast response"""
+    id: int
+    blood_type: str
+    region: str
+    forecast_date: datetime
+    predicted_demand: float
+    confidence: float
+    shortage_risk: str
+    alert_sent: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class DemandHistoryCreate(BaseModel):
+    """Schema for creating demand history"""
+    blood_type: str = Field(..., pattern=r"^(A|B|AB|O)[+-]$")
+    region: str = Field(..., min_length=1, max_length=100)
+    demand_units: int = Field(..., ge=0)
+    date: datetime
+    season: Optional[str] = None
+    disease_outbreak: bool = False
+
+# ============ Inventory Schemas ============
+
+class InventoryLevelResponse(BaseModel):
+    """Schema for inventory level response"""
+    id: int
+    hospital_id: int
+    blood_type: str
+    current_units: int
+    min_required: int
+    max_capacity: int
+    last_updated: datetime
+    hospital: Optional[HospitalResponse] = None
+    
+    class Config:
+        from_attributes = True
+
+class InventoryUpdate(BaseModel):
+    """Schema for updating inventory"""
+    hospital_id: int
+    blood_type: str = Field(..., pattern=r"^(A|B|AB|O)[+-]$")
+    current_units: int = Field(..., ge=0)
+

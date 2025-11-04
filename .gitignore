@@ -49,3 +49,13 @@ htmlcov/
 *.tmp
 *.temp
 
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ML Models
+*.pkl
+*.joblib
+

@@ -23,3 +23,9 @@ qdrant-client==1.11.3
 
 # HTTP client
 httpx==0.28.1
+
+# ML for demand forecasting
+scikit-learn==1.5.2
+pandas==2.2.3
+numpy==1.26.4
+joblib==1.4.2

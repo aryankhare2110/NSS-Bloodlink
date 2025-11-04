@@ -199,6 +199,34 @@ def seed_database():
         
         print(f"✅ Created {len(requests)} blood requests")
         
+        # Insert sample inventory levels
+        print("📦 Inserting inventory levels...")
+        from app.models.models import InventoryLevel
+        import random
+        
+        inventories = []
+        blood_types = ["O+", "A+", "B+", "AB+", "O-", "A-", "B-", "AB-"]
+        
+        for hospital in hospitals:
+            for blood_type in blood_types:
+                # Random inventory level (some hospitals have shortage, some have surplus)
+                current_units = random.randint(5, 80)
+                min_required = 20
+                max_capacity = 100
+                
+                inventory = InventoryLevel(
+                    hospital_id=hospital.id,
+                    blood_type=blood_type,
+                    current_units=current_units,
+                    min_required=min_required,
+                    max_capacity=max_capacity
+                )
+                db.add(inventory)
+                inventories.append(inventory)
+        
+        db.commit()
+        print(f"✅ Created {len(inventories)} inventory records")
+        
         print("\n" + "="*50)
         print("✅ Database seeding completed successfully!")
         print("="*50)
@@ -206,6 +234,7 @@ def seed_database():
         print(f"   - Hospitals: {len(hospitals)}")
         print(f"   - Donors: {len(donors)}")
         print(f"   - Requests: {len(requests)}")
+        print(f"   - Inventory records: {len(inventories)}")
         print("\n🚀 You can now start the server and test the API at http://localhost:8000/docs")
         
     except Exception as e:
