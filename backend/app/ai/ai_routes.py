@@ -127,63 +127,89 @@ def parse_message_regex(message: str) -> dict:
     """
     Parse message using regex patterns to extract blood group and region.
     """
-    message_upper = message.upper()
-    
-    # Extract blood group (A+, B-, O+, AB+, etc.)
+    message_clean = message.strip()
+    message_upper = message_clean.upper()
+
+    # Robust blood-group extraction supporting variations like:
+    # "O+", "o +", "O positive", "A pos", "AB negative", "B neg", "A plus"
     blood_group = None
-    
-    # Pattern: Match blood group formats (A+, B-, O+, AB+, A-, etc.)
-    # Look for 1-2 letters (A, B, O, AB) followed by + or -
-    blood_patterns = [
-        r'\b([ABO]{1,2}[+-])\b',  # Standard: O+, A-, AB+
-        r'\b([ABO]{1,2})\s*[+-]',  # With space: O +, A -, AB +
-        r'([ABO]{1,2})[+-]',       # Without word boundary
-    ]
-    
-    for pattern in blood_patterns:
-        match = re.search(pattern, message_upper)
-        if match:
-            # Extract the group and sign
-            group_part = match.group(1).upper()
-            # Find the + or - sign in the match
-            full_match = match.group(0)
-            if '+' in full_match:
-                blood_group = group_part + '+'
-            elif '-' in full_match:
-                blood_group = group_part + '-'
-            
-            if blood_group:
-                break
-    
+
+    # Combined pattern for letter + sign/word
+    blood_pattern = re.compile(r"\b(AB|A|B|O)\s*(?:\+|\-|PLUS|MINUS|POSITIVE|NEGATIVE|POS|NEG)\b", re.IGNORECASE)
+    m = blood_pattern.search(message_clean)
+    if m:
+        grp = m.group(1).upper()
+        # determine sign by searching nearby tokens in the match span
+        span = m.group(0)
+        if re.search(r'\+', span) or re.search(r'PLUS|POSITIVE|POS', span, re.IGNORECASE):
+            blood_group = grp + '+'
+        elif re.search(r'-', span) or re.search(r'MINUS|NEGATIVE|NEG', span, re.IGNORECASE):
+            blood_group = grp + '-'
+
+    # As a fallback, try to match compact forms like 'A+' or 'AB-'
+    if not blood_group:
+        compact = re.search(r"\b(AB|A|B|O)[+-]\b", message_clean, re.IGNORECASE)
+        if compact:
+            blood_group = compact.group(0).upper()
+
     # Extract region (look for common location keywords)
     region = None
-    
-    # Check for hospital names
+
+    # Check for hospital names (case-insensitive)
     hospitals = ["AIIMS", "APOLLO", "MAX", "FORTIS", "SAFDARJUNG", "BLK"]
     for hospital in hospitals:
-        if hospital in message_upper:
+        if hospital.lower() in message_clean.lower():
             region = hospital
             break
-    
-    # Check for Delhi regions
-    delhi_regions = ["SOUTH DELHI", "NORTH DELHI", "EAST DELHI", "WEST DELHI", 
-                     "CENTRAL DELHI", "DWARKA", "ROHINI", "NOIDA", "GURGAON"]
-    for delhi_region in delhi_regions:
-        if delhi_region in message_upper:
-            region = delhi_region
+
+    # Check for known regions
+    regions = ["SOUTH DELHI", "NORTH DELHI", "EAST DELHI", "WEST DELHI", "CENTRAL DELHI",
+               "DWARKA", "ROHINI", "NOIDA", "GURGAON", "CONNAUGHT PLACE", "SECTOR"]
+    for r in regions:
+        if r.lower() in message_clean.lower():
+            region = r.title()
             break
-    
-    # Check for "near" or "around" patterns
+
+    # Check for "near" or "around" patterns to capture freeform location names
     if not region:
-        near_pattern = r'(?:near|around|in|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'
-        match = re.search(near_pattern, message, re.IGNORECASE)
-        if match:
-            region = match.group(1)
-    
+        near_pattern = re.search(r"(?:near|around|in|at|nearby)\s+([A-Za-z0-9\-\s]+?)($|\.|,|\?|!|\band\b|\bfor\b)", message_clean, re.IGNORECASE)
+        if near_pattern:
+            region = near_pattern.group(1).strip()
+
     return {
         "blood_group": blood_group,
         "region": region
     }
+
+
+def detect_intent(message: str, parsed: dict = None) -> tuple:
+    """Detect user intent from message. Returns (intent, confidence).
+
+    Intents supported: 'compatibility_info', 'recommend_location', 'help', 'find_donor'
+    """
+    if parsed is None:
+        parsed = parse_message_regex(message)
+
+    text = message.lower()
+
+    # High-priority: explicit compatibility questions
+    if re.search(r'who can donate to|who can give to|can donate to|compatible with|compatible with', text):
+        return ("compatibility_info", 0.98)
+
+    # If message explicitly asks for locations or camps
+    if any(k in text for k in ["where to", "best place", "organize a camp", "host a camp", "recommend location", "where should"]):
+        return ("recommend_location", 0.9)
+
+    # Help / capabilities
+    if any(k in text for k in ["help", "what can you do", "commands", "how do i use", "how can you"]):
+        return ("help", 0.9)
+
+    # If blood group is present and user asks to find donors or mentions "near"
+    if parsed.get("blood_group") or any(w in text for w in ["donor", "donors", "find", "near", "nearby"]):
+        return ("find_donor", 0.85)
+
+    # Default fallback
+    return ("find_donor", 0.5)
 
 # ============ Donor Querying ============
 
@@ -400,19 +426,59 @@ async def chat(
     ```
     """
     try:
-        # Parse message to extract blood group and region
+        # Parse message to extract blood group and region (LLM or regex)
         parsed_info = parse_message_with_llm(request.message)
         blood_group = parsed_info.get("blood_group")
         region = parsed_info.get("region")
-        
-        # Query donors from database
+
+        # Detect intent
+        intent, confidence = detect_intent(request.message, parsed=parsed_info)
+
+        # Handle compatibility info intent
+        if intent == "compatibility_info":
+            # Basic compatibility table summary
+            compatibility = (
+                "Compatibility quick guide:\n"
+                "- O- can donate to everyone (universal donor).\n"
+                "- O+ can donate to all positive types (A+, B+, AB+, O+).\n"
+                "- A- can donate to A-, A+, AB-, AB+.\n"
+                "- A+ can donate to A+, AB+.\n"
+                "- B- can donate to B-, B+, AB-, AB+.\n"
+                "- B+ can donate to B+, AB+.\n"
+                "- AB- can donate to AB-, AB+.\n"
+                "- AB+ can receive from everyone (universal recipient)."
+            )
+
+            # If a blood group was mentioned, add a focused sentence
+            if blood_group:
+                compatibility += f"\n\nYou asked about {blood_group}. I can search for available {blood_group} donors near {region or 'your area'} if you want."
+
+            return ChatResponse(answer=compatibility)
+
+        # Recommend location intent
+        if intent == "recommend_location":
+            top_locations = analyze_donor_density()
+            reasons = "\n".join([f"- {loc['location']}: {loc['reason']} (score: {loc['score']})" for loc in top_locations])
+            answer = "Top recommended locations to host a blood donation camp:\n" + reasons
+            return ChatResponse(answer=answer)
+
+        # Help intent
+        if intent == "help":
+            help_text = (
+                "I can help you find available donors, suggest locations for camps, or explain blood compatibility.\n"
+                "Try messages like:\n"
+                "- 'Find O+ donors near AIIMS'\n"
+                "- 'Who can donate to B-'\n"
+                "- 'Where should we host a camp in South Delhi?'\n"
+                "- 'Help' to see this message again."
+            )
+            return ChatResponse(answer=help_text)
+
+        # Default: find donors
         donors = await query_donors(db, blood_group=blood_group, region=region)
-        
-        # Format response using LLM or simple formatting
         answer = await format_donor_response(request.message, donors)
-        
         return ChatResponse(answer=answer)
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
