@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet"
 import { Icon } from "leaflet"
 import "leaflet/dist/leaflet.css"
@@ -6,6 +7,7 @@ import "leaflet/dist/leaflet.css"
 import L from "leaflet"
 import icon from "leaflet/dist/images/marker-icon.png"
 import iconShadow from "leaflet/dist/images/marker-shadow.png"
+import { getDonors, type Donor } from "@/services/api"
 
 const DefaultIcon = L.icon({
   iconUrl: icon,
@@ -33,26 +35,35 @@ const createDonorIcon = () => {
   })
 }
 
-const donorMarkers = [
-  {
-    id: 1,
-    name: "Aryan",
-    bloodGroup: "A+",
-    position: [28.545, 77.273] as [number, number],
-  },
-  {
-    id: 2,
-    name: "Simran",
-    bloodGroup: "B+",
-    position: [28.554, 77.265] as [number, number],
-  },
-]
-
 export function DonorMap() {
+  const [donors, setDonors] = useState<Donor[]>([])
+  const [center, setCenter] = useState<[number, number]>([28.545, 77.273])
+
+  useEffect(() => {
+    const fetchDonors = async () => {
+      try {
+        const donorList = await getDonors(true) // Only available donors
+        setDonors(donorList)
+        
+        // Calculate center from donors if available
+        if (donorList.length > 0) {
+          const avgLat = donorList.reduce((sum, d) => sum + d.lat, 0) / donorList.length
+          const avgLng = donorList.reduce((sum, d) => sum + d.lng, 0) / donorList.length
+          setCenter([avgLat, avgLng])
+        }
+      } catch (error) {
+        console.error("Error fetching donors for map:", error)
+        // Keep default center if fetch fails
+      }
+    }
+
+    fetchDonors()
+  }, [])
+
   return (
     <div className="h-full w-full rounded-2xl overflow-hidden">
       <MapContainer
-        center={[28.545, 77.273]}
+        center={center}
         zoom={13}
         style={{ height: "100%", width: "100%", zIndex: 0 }}
         scrollWheelZoom={true}
@@ -61,16 +72,19 @@ export function DonorMap() {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        {donorMarkers.map((donor) => (
+        {donors.map((donor) => (
           <Marker
             key={donor.id}
-            position={donor.position}
+            position={[donor.lat, donor.lng] as [number, number]}
             icon={createDonorIcon()}
           >
             <Popup>
               <div className="text-center">
                 <p className="font-semibold text-foreground">{donor.name}</p>
-                <p className="text-sm text-muted-foreground">{donor.bloodGroup}</p>
+                <p className="text-sm text-muted-foreground">{donor.blood_group}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {donor.available ? "Available" : "Unavailable"}
+                </p>
               </div>
             </Popup>
           </Marker>

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Plus, Bell, MapPin } from "lucide-react"
 import { motion } from "framer-motion"
 import {
@@ -22,66 +22,15 @@ import { Select } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast"
 import { PageTransition } from "@/components/PageTransition"
 import { Badge } from "@/components/ui/badge"
+import { getRequests, postRequest, type Request as APIRequest } from "@/services/api"
 
 interface Request {
   id: number
   hospitalName: string
   bloodGroup: string
   urgency: "Low" | "Medium" | "High" | "Critical"
-  distance: string
   location: string
 }
-
-const dummyRequests: Request[] = [
-  {
-    id: 1,
-    hospitalName: "Apollo Hospital",
-    bloodGroup: "O+",
-    urgency: "Critical",
-    distance: "2.5 km",
-    location: "Delhi",
-  },
-  {
-    id: 2,
-    hospitalName: "AIIMS",
-    bloodGroup: "A+",
-    urgency: "High",
-    distance: "5.1 km",
-    location: "Delhi",
-  },
-  {
-    id: 3,
-    hospitalName: "Max Hospital",
-    bloodGroup: "B+",
-    urgency: "Medium",
-    distance: "8.3 km",
-    location: "Delhi",
-  },
-  {
-    id: 4,
-    hospitalName: "Fortis Hospital",
-    bloodGroup: "AB-",
-    urgency: "High",
-    distance: "12.7 km",
-    location: "Delhi",
-  },
-  {
-    id: 5,
-    hospitalName: "Safdarjung Hospital",
-    bloodGroup: "O-",
-    urgency: "Critical",
-    distance: "3.2 km",
-    location: "Delhi",
-  },
-  {
-    id: 6,
-    hospitalName: "BLK Hospital",
-    bloodGroup: "B-",
-    urgency: "Low",
-    distance: "9.5 km",
-    location: "Delhi",
-  },
-]
 
 const getUrgencyBadge = (urgency: string) => {
   if (urgency === "High" || urgency === "Critical") {
@@ -93,27 +42,165 @@ const getUrgencyBadge = (urgency: string) => {
 export default function Requests() {
   const { addToast } = useToast()
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [requests, setRequests] = useState<Request[]>([])
   const [formData, setFormData] = useState({
-    hospitalName: "",
-    bloodGroup: "",
-    urgency: "",
-    location: "",
+    hospital_id: "",
+    blood_type: "",
+    urgency: "Medium",
+    status: "Pending",
   })
+
+  useEffect(() => {
+    const fetchRequests = async () => {
+      try {
+        setIsLoading(true)
+        const apiRequests = await getRequests()
+        
+        // Transform API requests to component format
+        const transformedRequests: Request[] = apiRequests.map((req: APIRequest) => ({
+          id: req.id,
+          hospitalName: req.hospital?.name || "Unknown Hospital",
+          bloodGroup: req.blood_type,
+          urgency: req.urgency,
+          location: req.hospital?.location || "Unknown",
+        }))
+        
+        setRequests(transformedRequests)
+      } catch (error) {
+        console.error("Error fetching requests:", error)
+        addToast("Server unavailable", "error")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchRequests()
+  }, [addToast])
+
+  // Listen for real-time new requests via Socket.IO
+  useEffect(() => {
+    const handleNewRequest = async (event: CustomEvent) => {
+      const requestData = event.detail as {
+        id: number
+        hospital_id: number
+        hospital_name?: string
+        blood_type: string
+        urgency: string
+        status: string
+        created_at?: string
+      }
+
+      // Fetch full request details to get hospital information
+      try {
+        const apiRequests = await getRequests()
+        const newRequest = apiRequests.find((req: APIRequest) => req.id === requestData.id)
+        
+        if (newRequest) {
+          const transformedRequest: Request = {
+            id: newRequest.id,
+            hospitalName: newRequest.hospital?.name || requestData.hospital_name || "Unknown Hospital",
+            bloodGroup: newRequest.blood_type,
+            urgency: newRequest.urgency,
+            location: newRequest.hospital?.location || "Unknown",
+          }
+
+          // Add new request to the list if it doesn't already exist
+          setRequests((prevRequests) => {
+            // Check if request already exists
+            if (prevRequests.some((req) => req.id === transformedRequest.id)) {
+              return prevRequests
+            }
+            // Add new request at the beginning
+            return [transformedRequest, ...prevRequests]
+          })
+        } else {
+          // If we can't fetch full details, create a basic request from the socket data
+          const transformedRequest: Request = {
+            id: requestData.id,
+            hospitalName: requestData.hospital_name || "Unknown Hospital",
+            bloodGroup: requestData.blood_type,
+            urgency: requestData.urgency as "Low" | "Medium" | "High" | "Critical",
+            location: "Unknown", // We don't have location in socket data
+          }
+
+          setRequests((prevRequests) => {
+            // Check if request already exists
+            if (prevRequests.some((req) => req.id === transformedRequest.id)) {
+              return prevRequests
+            }
+            // Add new request at the beginning
+            return [transformedRequest, ...prevRequests]
+          })
+        }
+      } catch (error) {
+        console.error("Error fetching new request details:", error)
+        // Still add the request with basic info
+        const transformedRequest: Request = {
+          id: requestData.id,
+          hospitalName: requestData.hospital_name || "Unknown Hospital",
+          bloodGroup: requestData.blood_type,
+          urgency: requestData.urgency as "Low" | "Medium" | "High" | "Critical",
+          location: "Unknown",
+        }
+
+        setRequests((prevRequests) => {
+          if (prevRequests.some((req) => req.id === transformedRequest.id)) {
+            return prevRequests
+          }
+          return [transformedRequest, ...prevRequests]
+        })
+      }
+    }
+
+    // Listen for custom events from Socket.IO context
+    const eventHandler = (event: Event) => {
+      handleNewRequest(event as CustomEvent)
+    }
+    window.addEventListener("new_request", eventHandler)
+
+    return () => {
+      window.removeEventListener("new_request", eventHandler)
+    }
+  }, [addToast])
 
   const handleNotifyDonors = () => {
     addToast("Alert sent to matching donors.", "success")
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    addToast("Request created successfully!", "success")
-    setIsDialogOpen(false)
-    setFormData({
-      hospitalName: "",
-      bloodGroup: "",
-      urgency: "",
-      location: "",
-    })
+    try {
+      await postRequest({
+        hospital_id: parseInt(formData.hospital_id),
+        blood_type: formData.blood_type,
+        urgency: formData.urgency as "Low" | "Medium" | "High" | "Critical",
+        status: formData.status as "Pending" | "Active" | "Fulfilled" | "Cancelled",
+      })
+      
+      addToast("Request created successfully!", "success")
+      setIsDialogOpen(false)
+      setFormData({
+        hospital_id: "",
+        blood_type: "",
+        urgency: "Medium",
+        status: "Pending",
+      })
+      
+      // Refresh requests list
+      const apiRequests = await getRequests()
+      const transformedRequests: Request[] = apiRequests.map((req: APIRequest) => ({
+        id: req.id,
+        hospitalName: req.hospital?.name || "Unknown Hospital",
+        bloodGroup: req.blood_type,
+        urgency: req.urgency,
+        location: req.hospital?.location || "Unknown",
+      }))
+      setRequests(transformedRequests)
+    } catch (error) {
+      console.error("Error creating request:", error)
+      addToast("Server unavailable", "error")
+    }
   }
 
   return (
@@ -127,9 +214,22 @@ export default function Requests() {
           </p>
         </div>
 
-          {/* Request Cards Grid - 2 Columns Masonry */}
-          <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2">
-            {dummyRequests.map((request, index) => (
+            {/* Request Cards Grid - 2 Columns Masonry */}
+            {isLoading ? (
+              <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2">
+                {[...Array(4)].map((_, i) => (
+                  <Card key={i} className="animate-pulse">
+                    <CardHeader className="h-24 bg-gray-200" />
+                    <CardContent className="p-6 space-y-4">
+                      <div className="h-4 bg-gray-200 rounded w-3/4" />
+                      <div className="h-4 bg-gray-200 rounded w-1/2" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2">
+                {requests.map((request, index) => (
               <motion.div
                 key={request.id}
                 initial={{ opacity: 0, y: 20 }}
@@ -159,13 +259,13 @@ export default function Requests() {
                         </Badge>
                       </div>
                       
-                      {/* Location */}
-                      <div className="flex items-center gap-2">
-                        <MapPin className="h-5 w-5 text-gray-400" />
-                        <span className="text-sm text-gray-500">
-                          {request.location} • {request.distance}
-                        </span>
-                      </div>
+                        {/* Location */}
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-5 w-5 text-gray-400" />
+                          <span className="text-sm text-gray-500">
+                            {request.location}
+                          </span>
+                        </div>
                     </div>
                   </CardContent>
                   
@@ -178,10 +278,11 @@ export default function Requests() {
                       Notify Donors
                     </Button>
                   </CardFooter>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
+                  </Card>
+                </motion.div>
+              ))}
+              </div>
+            )}
 
           {/* Floating Action Button - Circular Red */}
           <motion.button
@@ -203,73 +304,63 @@ export default function Requests() {
                   Create a new blood donation request for a hospital.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    Hospital Name
-                  </label>
-                  <Input
-                    required
-                    value={formData.hospitalName}
-                    onChange={(e) =>
-                      setFormData({ ...formData, hospitalName: e.target.value })
-                    }
-                    placeholder="Enter hospital name"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    Blood Group
-                  </label>
-                  <Select
-                    required
-                    value={formData.bloodGroup}
-                    onChange={(e) =>
-                      setFormData({ ...formData, bloodGroup: e.target.value })
-                    }
-                  >
-                    <option value="">Select blood group</option>
-                    <option value="A+">A+</option>
-                    <option value="A-">A-</option>
-                    <option value="B+">B+</option>
-                    <option value="B-">B-</option>
-                    <option value="O+">O+</option>
-                    <option value="O-">O-</option>
-                    <option value="AB+">AB+</option>
-                    <option value="AB-">AB-</option>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    Urgency
-                  </label>
-                  <Select
-                    required
-                    value={formData.urgency}
-                    onChange={(e) =>
-                      setFormData({ ...formData, urgency: e.target.value })
-                    }
-                  >
-                    <option value="">Select urgency level</option>
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                    <option value="Critical">Critical</option>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    Location
-                  </label>
-                  <Input
-                    required
-                    value={formData.location}
-                    onChange={(e) =>
-                      setFormData({ ...formData, location: e.target.value })
-                    }
-                    placeholder="Enter location"
-                  />
-                </div>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      Hospital ID
+                    </label>
+                    <Input
+                      required
+                      type="number"
+                      value={formData.hospital_id}
+                      onChange={(e) =>
+                        setFormData({ ...formData, hospital_id: e.target.value })
+                      }
+                      placeholder="Enter hospital ID (e.g., 1, 2, 3)"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Use existing hospital IDs from the database
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      Blood Group
+                    </label>
+                    <Select
+                      required
+                      value={formData.blood_type}
+                      onChange={(e) =>
+                        setFormData({ ...formData, blood_type: e.target.value })
+                      }
+                    >
+                      <option value="">Select blood group</option>
+                      <option value="A+">A+</option>
+                      <option value="A-">A-</option>
+                      <option value="B+">B+</option>
+                      <option value="B-">B-</option>
+                      <option value="O+">O+</option>
+                      <option value="O-">O-</option>
+                      <option value="AB+">AB+</option>
+                      <option value="AB-">AB-</option>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      Urgency
+                    </label>
+                    <Select
+                      required
+                      value={formData.urgency}
+                      onChange={(e) =>
+                        setFormData({ ...formData, urgency: e.target.value })
+                      }
+                    >
+                      <option value="Low">Low</option>
+                      <option value="Medium">Medium</option>
+                      <option value="High">High</option>
+                      <option value="Critical">Critical</option>
+                    </Select>
+                  </div>
                 <DialogFooter>
                   <Button
                     type="button"

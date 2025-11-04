@@ -1,18 +1,17 @@
 import { useState, useEffect } from "react"
-import { LogOut } from "lucide-react"
 import { motion } from "framer-motion"
 import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/components/ui/toast"
 import { PageTransition } from "@/components/PageTransition"
+import { requestPermission, hasNotificationPermission, onMessageListener } from "@/firebase"
 
 export default function Settings() {
   const { addToast } = useToast()
   const [darkMode, setDarkMode] = useState(false)
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true)
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false)
 
-  // Load dark mode preference from localStorage
+  // Load preferences from localStorage
   useEffect(() => {
     const savedDarkMode = localStorage.getItem("darkMode") === "true"
     setDarkMode(savedDarkMode)
@@ -21,7 +20,35 @@ export default function Settings() {
     } else {
       document.documentElement.classList.remove("dark")
     }
+
+    // Check if notifications are enabled
+    const savedNotifications = localStorage.getItem("notificationsEnabled") === "true"
+    setNotificationsEnabled(savedNotifications || hasNotificationPermission())
   }, [])
+
+  // Setup FCM message listener when notifications are enabled
+  useEffect(() => {
+    if (notificationsEnabled && hasNotificationPermission()) {
+      const unsubscribe = onMessageListener((payload) => {
+        console.log("📨 Received FCM message:", payload)
+        
+        // Show toast notification
+        const notification = payload.notification
+        if (notification) {
+          addToast(
+            notification.body || notification.title || "New notification",
+            "info"
+          )
+        }
+      })
+
+      return () => {
+        if (unsubscribe) {
+          unsubscribe()
+        }
+      }
+    }
+  }, [notificationsEnabled, addToast])
 
   const handleDarkModeToggle = (checked: boolean) => {
     setDarkMode(checked)
@@ -35,19 +62,41 @@ export default function Settings() {
     }
   }
 
-  const handleNotificationsToggle = (checked: boolean) => {
-    setNotificationsEnabled(checked)
-    addToast(
-      checked
-        ? "Push notifications enabled"
-        : "Push notifications disabled",
-      "info"
-    )
+  const handleNotificationsToggle = async (checked: boolean) => {
+    if (checked) {
+      // Request notification permission
+      try {
+        const token = await requestPermission()
+        
+        if (token) {
+          setNotificationsEnabled(true)
+          localStorage.setItem("notificationsEnabled", "true")
+          addToast("Notifications enabled", "success")
+        } else {
+          // Permission denied or not available
+          setNotificationsEnabled(false)
+          localStorage.setItem("notificationsEnabled", "false")
+          
+          if (Notification.permission === "denied") {
+            addToast("Notification permission denied. Please enable in browser settings.", "error")
+          } else {
+            addToast("Failed to enable notifications", "error")
+          }
+        }
+      } catch (error) {
+        console.error("Error requesting notification permission:", error)
+        setNotificationsEnabled(false)
+        localStorage.setItem("notificationsEnabled", "false")
+        addToast("Failed to enable notifications", "error")
+      }
+    } else {
+      // Disable notifications
+      setNotificationsEnabled(false)
+      localStorage.setItem("notificationsEnabled", "false")
+      addToast("Notifications disabled", "info")
+    }
   }
 
-  const handleLogout = () => {
-    addToast("Logged out successfully", "success")
-  }
 
   return (
     <PageTransition>
@@ -82,7 +131,7 @@ export default function Settings() {
                         Name
                       </label>
                       <p className="mt-1 text-foreground">
-                        NSS Coordinator
+                        {localStorage.getItem("user_name") || "NSS Coordinator"}
                       </p>
                     </div>
                     <div>
@@ -98,7 +147,7 @@ export default function Settings() {
                         Email
                       </label>
                       <p className="mt-1 text-foreground">
-                        coordinator@nssbloodlink.org
+                        {localStorage.getItem("user_email") || "coordinator@nssbloodlink.org"}
                       </p>
                     </div>
                   </div>
@@ -155,29 +204,24 @@ export default function Settings() {
                 {/* Divider */}
                 <div className="border-t border-gray-200" />
 
-                {/* Actions Section */}
-                <div className="p-6">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <a
-                      href="#"
-                      className="text-sm text-primary hover:underline transition-all"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        addToast("Privacy Policy opened", "info")
-                      }}
-                    >
-                      Privacy Policy
-                    </a>
-                    <Button
-                      onClick={handleLogout}
-                      variant="destructive"
-                      className="w-full sm:w-auto hover:shadow-lg transition-all"
-                    >
-                      <LogOut className="mr-2 h-5 w-5" />
-                      Logout
-                    </Button>
-                  </div>
-                </div>
+                    {/* Actions Section */}
+                    <div className="p-6">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <a
+                          href="#"
+                          className="text-sm text-primary hover:underline transition-all"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            addToast("Privacy Policy opened", "info")
+                          }}
+                        >
+                          Privacy Policy
+                        </a>
+                        <p className="text-xs text-muted-foreground">
+                          Use the logout button in the navbar to sign out
+                        </p>
+                      </div>
+                    </div>
               </CardContent>
             </Card>
           </motion.div>

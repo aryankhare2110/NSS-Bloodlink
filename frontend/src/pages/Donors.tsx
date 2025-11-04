@@ -17,82 +17,16 @@ import { TableSkeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/toast"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
+import { getDonors, type Donor as APIDonor } from "@/services/api"
 
 interface Donor {
   id: number
   name: string
   bloodGroup: string
   availability: "Available" | "Unavailable"
-  lastDonationDate: string
+  lastDonationDate: string | null
   location: string
 }
-
-const dummyDonors: Donor[] = [
-  {
-    id: 1,
-    name: "Aryan Kumar",
-    bloodGroup: "A+",
-    availability: "Available",
-    lastDonationDate: "2024-01-15",
-    location: "Delhi",
-  },
-  {
-    id: 2,
-    name: "Simran Singh",
-    bloodGroup: "B+",
-    availability: "Available",
-    lastDonationDate: "2024-02-20",
-    location: "Delhi",
-  },
-  {
-    id: 3,
-    name: "Priya Sharma",
-    bloodGroup: "O+",
-    availability: "Unavailable",
-    lastDonationDate: "2024-03-10",
-    location: "Mumbai",
-  },
-  {
-    id: 4,
-    name: "Rahul Verma",
-    bloodGroup: "AB+",
-    availability: "Available",
-    lastDonationDate: "2024-01-05",
-    location: "Bangalore",
-  },
-  {
-    id: 5,
-    name: "Anjali Patel",
-    bloodGroup: "A-",
-    availability: "Available",
-    lastDonationDate: "2024-02-28",
-    location: "Delhi",
-  },
-  {
-    id: 6,
-    name: "Vikram Reddy",
-    bloodGroup: "B-",
-    availability: "Unavailable",
-    lastDonationDate: "2024-03-15",
-    location: "Hyderabad",
-  },
-  {
-    id: 7,
-    name: "Neha Gupta",
-    bloodGroup: "O-",
-    availability: "Available",
-    lastDonationDate: "2024-01-20",
-    location: "Delhi",
-  },
-  {
-    id: 8,
-    name: "Karan Malhotra",
-    bloodGroup: "AB-",
-    availability: "Available",
-    lastDonationDate: "2024-02-12",
-    location: "Pune",
-  },
-]
 
 export default function Donors() {
   const { addToast } = useToast()
@@ -100,16 +34,90 @@ export default function Donors() {
   const [bloodGroupFilter, setBloodGroupFilter] = useState("all")
   const [availabilityFilter, setAvailabilityFilter] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
+  const [donors, setDonors] = useState<Donor[]>([])
+  const [allDonors, setAllDonors] = useState<Donor[]>([])
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false)
-      addToast("Donors loaded successfully", "success")
-    }, 800)
-    return () => clearTimeout(timer)
+    const fetchDonors = async () => {
+      try {
+        setIsLoading(true)
+        const apiDonors = await getDonors()
+        
+        // Transform API donors to component format
+        const transformedDonors: Donor[] = apiDonors.map((donor: APIDonor) => ({
+          id: donor.id,
+          name: donor.name,
+          bloodGroup: donor.blood_group,
+          availability: donor.available ? "Available" : "Unavailable",
+          lastDonationDate: donor.last_donation_date,
+          location: `Lat: ${donor.lat.toFixed(3)}, Lng: ${donor.lng.toFixed(3)}`, // Use coordinates as location for now
+        }))
+        
+        setAllDonors(transformedDonors)
+        setDonors(transformedDonors)
+      } catch (error) {
+        console.error("Error fetching donors:", error)
+        addToast("Server unavailable", "error")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchDonors()
   }, [addToast])
 
-  const filteredDonors = dummyDonors.filter((donor) => {
+  // Listen for real-time donor status updates via Socket.IO
+  useEffect(() => {
+    const handleDonorUpdate = (event: CustomEvent) => {
+      const donorData = event.detail as {
+        id: number
+        name: string
+        blood_group: string
+        available: boolean
+        last_donation_date?: string | null
+      }
+
+      // Update the donor in the list
+      setDonors((prevDonors) =>
+        prevDonors.map((donor) =>
+          donor.id === donorData.id
+            ? {
+                ...donor,
+                availability: donorData.available ? "Available" : "Unavailable",
+                bloodGroup: donorData.blood_group,
+                lastDonationDate: donorData.last_donation_date || null,
+              }
+            : donor
+        )
+      )
+
+      // Also update allDonors
+      setAllDonors((prevDonors) =>
+        prevDonors.map((donor) =>
+          donor.id === donorData.id
+            ? {
+                ...donor,
+                availability: donorData.available ? "Available" : "Unavailable",
+                bloodGroup: donorData.blood_group,
+                lastDonationDate: donorData.last_donation_date || null,
+              }
+            : donor
+        )
+      )
+    }
+
+    // Listen for custom events from Socket.IO context
+    const eventHandler = (event: Event) => {
+      handleDonorUpdate(event as CustomEvent)
+    }
+    window.addEventListener("donor_status_update", eventHandler)
+
+    return () => {
+      window.removeEventListener("donor_status_update", eventHandler)
+    }
+  }, [])
+
+  const filteredDonors = donors.filter((donor) => {
     const matchesSearch =
       donor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       donor.location.toLowerCase().includes(searchQuery.toLowerCase())
@@ -123,7 +131,8 @@ export default function Donors() {
     return matchesSearch && matchesBloodGroup && matchesAvailability
   })
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return "Never"
     const date = new Date(dateString)
     return date.toLocaleDateString("en-US", {
       year: "numeric",
@@ -277,10 +286,10 @@ export default function Donors() {
             </Card>
           </motion.div>
 
-        {/* Results Count */}
-        <div className="mt-6 text-sm text-muted-foreground">
-          Showing {filteredDonors.length} of {dummyDonors.length} donors
-        </div>
+            {/* Results Count */}
+            <div className="mt-6 text-sm text-muted-foreground">
+              Showing {filteredDonors.length} of {allDonors.length} donors
+            </div>
       </div>
     </PageTransition>
   )

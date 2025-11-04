@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageTransition } from "@/components/PageTransition"
 import { Card } from "@/components/ui/card"
+import { useToast } from "@/components/ui/toast"
+import { getAIChat } from "@/services/api"
 
 interface Message {
   id: string
@@ -34,6 +36,7 @@ function TypingMessage({ text }: { text: string }) {
 }
 
 export default function Assistant() {
+  const { addToast } = useToast()
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -48,6 +51,23 @@ export default function Assistant() {
     scrollToBottom()
   }, [messages, isTyping])
 
+  // Generate dummy fallback reply based on message content
+  const getDummyReply = (message: string): string => {
+    const messageLower = message.toLowerCase()
+    
+    if (messageLower.includes("donor") || messageLower.includes("blood")) {
+      return "Simulating AI response... I found 3 available donors matching your criteria. They are ready to help with blood donation requests."
+    } else if (messageLower.includes("camp") || messageLower.includes("location")) {
+      return "Simulating AI response... Based on donor density analysis, I recommend hosting the next camp in South Delhi. This area has high donor engagement."
+    } else if (messageLower.includes("request") || messageLower.includes("urgent")) {
+      return "Simulating AI response... I can help you create a blood request. Please provide the hospital name, blood group, and urgency level."
+    } else if (messageLower.includes("hello") || messageLower.includes("hi") || messageLower.includes("hey")) {
+      return "Simulating AI response... Hello! I'm the NSS BloodLink AI Assistant. I can help you with donor matching, camp locations, and blood requests. How can I assist you today?"
+    } else {
+      return "Simulating AI response... I understand your request. The AI assistant is currently using simulated responses. Please check your OpenAI API key configuration for full functionality."
+    }
+  }
+
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return
 
@@ -59,41 +79,80 @@ export default function Assistant() {
     }
 
     setMessages((prev) => [...prev, userMessage])
+    const userInput = inputValue
     setInputValue("")
     setIsLoading(true)
-    setIsTyping(true)
+    setIsTyping(false)
+
+    // Show loading indicator while waiting for response
+    const loadingMessage: Message = {
+      id: `loading-${Date.now()}`,
+      text: "",
+      sender: "ai",
+      timestamp: new Date(),
+      isTyping: false,
+    }
+    setMessages((prev) => [...prev, loadingMessage])
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      // Call AI chat API
+      const aiResponseText = await getAIChat(userInput)
 
-      const aiResponse: Message = {
+      // Remove loading message and add actual response
+      setMessages((prev) => {
+        const filtered = prev.filter((msg) => msg.id !== loadingMessage.id)
+        const aiResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: aiResponseText,
+          sender: "ai",
+          timestamp: new Date(),
+          isTyping: true,
+        }
+        return [...filtered, aiResponse]
+      })
+
+      // Wait for typing animation to complete
+      setTimeout(() => {
+        setIsTyping(false)
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.isTyping ? { ...msg, isTyping: false } : msg
+          )
+        )
+      }, aiResponseText.length * 30)
+    } catch (error) {
+      console.error("Error fetching AI response:", error)
+      
+      // Remove loading message
+      setMessages((prev) => prev.filter((msg) => msg.id !== loadingMessage.id))
+      
+      // Use fallback dummy reply
+      const fallbackText = getDummyReply(userInput)
+      
+      const fallbackMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: "Sure, finding O+ donors near Saket Hospital. I found 3 available donors within 5km radius. Would you like me to notify them?",
+        text: fallbackText,
         sender: "ai",
         timestamp: new Date(),
         isTyping: true,
       }
 
-      setMessages((prev) => [...prev, aiResponse])
+      setMessages((prev) => [...prev, fallbackMessage])
+      
+      // Show toast only if it's a server error (not just fallback)
+      if (error instanceof Error && error.message === "Server unavailable") {
+        addToast("Server unavailable - using simulated response", "info")
+      }
       
       // Wait for typing animation to complete
       setTimeout(() => {
         setIsTyping(false)
         setMessages((prev) =>
           prev.map((msg) =>
-            msg.id === aiResponse.id ? { ...msg, isTyping: false } : msg
+            msg.id === fallbackMessage.id ? { ...msg, isTyping: false } : msg
           )
         )
-      }, aiResponse.text.length * 30)
-    } catch (error) {
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: "Sorry, I encountered an error. Please try again.",
-        sender: "ai",
-        timestamp: new Date(),
-      }
-      setMessages((prev) => [...prev, errorMessage])
-      setIsTyping(false)
+      }, fallbackText.length * 30)
     } finally {
       setIsLoading(false)
     }
@@ -151,60 +210,62 @@ export default function Assistant() {
                   </motion.div>
                 ) : (
                   <div className="space-y-4">
-                    {messages.map((message, index) => (
-                      <motion.div
-                        key={message.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3, delay: index * 0.05 }}
-                        className={`flex ${
-                          message.sender === "user" ? "justify-end" : "justify-start"
-                        }`}
-                      >
-                        <div
-                          className={`flex max-w-[80%] items-start gap-3 ${
-                            message.sender === "user" ? "flex-row-reverse" : "flex-row"
+                    {messages
+                      .filter((msg) => !msg.id.startsWith("loading-") || msg.text !== "")
+                      .map((message, index) => (
+                        <motion.div
+                          key={message.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: index * 0.05 }}
+                          className={`flex ${
+                            message.sender === "user" ? "justify-end" : "justify-start"
                           }`}
                         >
-                          {/* AI Avatar - Only for AI messages */}
-                          {message.sender === "ai" && (
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 shadow-sm hover:shadow-md transition-shadow">
-                              <Bot className="h-5 w-5 text-primary" />
-                            </div>
-                          )}
-
-                          {/* Message Bubble */}
                           <div
-                            className={`rounded-2xl px-4 py-3 transition-shadow ${
-                              message.sender === "user"
-                                ? "bg-primary text-white shadow-md hover:shadow-lg"
-                                : "bg-white/90 text-foreground border border-gray-200 shadow-sm hover:shadow-md"
+                            className={`flex max-w-[80%] items-start gap-3 ${
+                              message.sender === "user" ? "flex-row-reverse" : "flex-row"
                             }`}
                           >
-                            {message.isTyping && message.sender === "ai" ? (
-                              <p className="text-sm leading-relaxed">
-                                <TypingMessage text={message.text} />
-                                <span className="inline-block w-2 h-4 ml-1 bg-primary animate-pulse" />
-                              </p>
-                            ) : (
-                              <p className="text-sm leading-relaxed">{message.text}</p>
+                            {/* AI Avatar - Only for AI messages */}
+                            {message.sender === "ai" && (
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 shadow-sm hover:shadow-md transition-shadow">
+                                <Bot className="h-5 w-5 text-primary" />
+                              </div>
                             )}
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))}
 
-                    {/* Loading Indicator */}
-                    {isLoading && !isTyping && (
+                            {/* Message Bubble */}
+                            <div
+                              className={`rounded-2xl px-4 py-3 transition-shadow ${
+                                message.sender === "user"
+                                  ? "bg-primary text-white shadow-md hover:shadow-lg"
+                                  : "bg-white/90 text-foreground border border-gray-200 shadow-sm hover:shadow-md"
+                              }`}
+                            >
+                              {message.isTyping && message.sender === "ai" ? (
+                                <p className="text-sm leading-relaxed">
+                                  <TypingMessage text={message.text} />
+                                  <span className="inline-block w-2 h-4 ml-1 bg-primary animate-pulse" />
+                                </p>
+                              ) : (
+                                <p className="text-sm leading-relaxed">{message.text}</p>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+
+                    {/* Loading Indicator - Show when waiting for API response */}
+                    {isLoading && messages.some((msg) => msg.id.startsWith("loading-") && msg.text === "") && (
                       <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         className="flex justify-start"
                       >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 shadow-sm">
-                        <Bot className="h-5 w-5 text-primary" />
-                      </div>
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 shadow-sm">
+                            <Bot className="h-5 w-5 text-primary" />
+                          </div>
                           <div className="rounded-2xl bg-white/90 border border-gray-200 px-4 py-3 shadow-sm">
                             <div className="flex gap-1">
                               <div className="h-2 w-2 animate-bounce rounded-full bg-primary [animation-delay:-0.3s]"></div>

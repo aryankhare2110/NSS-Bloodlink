@@ -10,6 +10,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/toast"
 import { PageTransition } from "@/components/PageTransition"
+import { Badge } from "@/components/ui/badge"
+import { getAIRecommendation, type LocationRecommendation } from "@/services/api"
 
 interface ScheduledCamp {
   id: number
@@ -19,6 +21,7 @@ interface ScheduledCamp {
   volunteers: number
 }
 
+// Mock camps data (can be replaced with API later)
 const dummyCamps: ScheduledCamp[] = [
   {
     id: 1,
@@ -50,18 +53,10 @@ const dummyCamps: ScheduledCamp[] = [
   },
 ]
 
-interface AIRecommendation {
-  area: string
-  reason: string
-}
-
 export default function Camps() {
   const { addToast } = useToast()
   const [isLoading, setIsLoading] = useState(false)
-  const [aiRecommendation, setAiRecommendation] = useState<AIRecommendation | null>({
-    area: "South Delhi",
-    reason: "High Donor Density",
-  })
+  const [aiRecommendation, setAiRecommendation] = useState<LocationRecommendation | null>(null)
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -75,24 +70,18 @@ export default function Camps() {
   const handleAskAI = async () => {
     setIsLoading(true)
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      const recommendations = await getAIRecommendation()
       
-      const mockRecommendations = [
-        { area: "South Delhi", reason: "High Donor Density" },
-        { area: "Dwarka", reason: "Growing Population & High Engagement" },
-        { area: "Rohini", reason: "Excellent Volunteer Network" },
-        { area: "Noida Sector 62", reason: "Corporate Hub with Active Donors" },
-      ]
-      
-      const randomRecommendation =
-        mockRecommendations[
-          Math.floor(Math.random() * mockRecommendations.length)
-        ]
-      
-      setAiRecommendation(randomRecommendation)
-      addToast("AI recommendation generated successfully!", "success")
+      if (recommendations && recommendations.length > 0) {
+        // Use the top recommendation
+        setAiRecommendation(recommendations[0])
+        addToast("AI recommendation generated successfully!", "success")
+      } else {
+        addToast("No recommendations available.", "info")
+      }
     } catch (error) {
-      addToast("Failed to get AI recommendation. Please try again.", "error")
+      console.error("Error fetching AI recommendation:", error)
+      addToast("Server unavailable", "error")
     } finally {
       setIsLoading(false)
     }
@@ -166,43 +155,48 @@ export default function Camps() {
               AI Recommendation
             </h2>
 
-            {/* AI Recommendation Card - Larger with Gradient */}
-            <AnimatePresence mode="wait">
-              {aiRecommendation && (
-                <motion.div
-                  key={aiRecommendation.area}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.5, ease: "easeOut" }}
-                  className="mb-6"
-                >
-                  <Card className="bg-gradient-to-br from-white to-[#fdf2f2] border border-border shadow-sm hover:shadow-md transition-shadow">
-                    <CardHeader>
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="h-5 w-5 text-primary" />
-                        <CardTitle>Best Area to Host Next Camp</CardTitle>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5, delay: 0.2 }}
-                        className="space-y-2"
-                      >
-                        <p className="text-2xl font-semibold text-foreground">
-                          {aiRecommendation.area}
-                        </p>
-                        <p className="text-muted-foreground">
-                          {aiRecommendation.reason}
-                        </p>
-                      </motion.div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              )}
-            </AnimatePresence>
+              {/* AI Recommendation Card - Larger with Gradient */}
+              <AnimatePresence mode="wait">
+                {aiRecommendation && (
+                  <motion.div
+                    key={aiRecommendation.location}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                    className="mb-6"
+                  >
+                    <Card className="bg-gradient-to-br from-white to-[#fdf2f2] border border-border shadow-sm hover:shadow-md transition-shadow">
+                      <CardHeader>
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-5 w-5 text-primary" />
+                          <CardTitle>Best Area to Host Next Camp</CardTitle>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.5, delay: 0.2 }}
+                          className="space-y-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <p className="text-2xl font-semibold text-foreground">
+                              {aiRecommendation.location}
+                            </p>
+                            <Badge className="bg-primary text-white">
+                              Score: {aiRecommendation.score.toFixed(1)}
+                            </Badge>
+                          </div>
+                          <p className="text-muted-foreground">
+                            {aiRecommendation.reason}
+                          </p>
+                        </motion.div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
             {/* Ask AI Button - With Shimmer Animation */}
             <Button

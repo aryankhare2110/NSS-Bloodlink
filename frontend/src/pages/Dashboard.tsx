@@ -5,6 +5,8 @@ import { DonorMap } from "@/components/DonorMap"
 import { PageTransition } from "@/components/PageTransition"
 import { CardSkeleton, MapSkeleton } from "@/components/ui/skeleton"
 import { Card, CardContent } from "@/components/ui/card"
+import { useToast } from "@/components/ui/toast"
+import { getDonors, getRequests, getAIRecommendation, type LocationRecommendation } from "@/services/api"
 
 interface StatCardProps {
   title: string
@@ -56,13 +58,129 @@ function StatCard({ title, value, icon, progress, delay }: StatCardProps) {
 }
 
 export default function Dashboard() {
+  const { addToast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
+  const [stats, setStats] = useState({
+    activeDonors: 0,
+    openRequests: 0,
+    upcomingCamps: 8, // Mock for now, can be replaced with camps API later
+  })
+  const [aiRecommendation, setAiRecommendation] = useState<LocationRecommendation | null>(null)
+  const [isLoadingRecommendation, setIsLoadingRecommendation] = useState(true)
+  const [availableDonorCount, setAvailableDonorCount] = useState(0)
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false)
-    }, 1000)
-    return () => clearTimeout(timer)
+    const fetchData = async () => {
+      try {
+        setIsLoading(true)
+        
+        // Fetch donors and requests in parallel
+        const [donors, requests] = await Promise.all([
+          getDonors(true), // Only available donors
+          getRequests("Pending"), // Only pending requests
+        ])
+
+        // Calculate stats
+        const activeDonors = donors.length
+        const openRequests = requests.length
+
+        // Get available donor count for map overlay
+        const allDonors = await getDonors()
+        const availableCount = allDonors.filter((d) => d.available).length
+
+        setStats({
+          activeDonors,
+          openRequests,
+          upcomingCamps: 8, // Mock for now
+        })
+        setAvailableDonorCount(availableCount)
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error)
+        addToast("Server unavailable", "error")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [addToast])
+
+  // Listen for real-time updates via Socket.IO
+  useEffect(() => {
+    const handleDonorUpdate = async () => {
+      // Refresh donor stats when donor status changes
+      try {
+        const donors = await getDonors(true)
+        const allDonors = await getDonors()
+        const availableCount = allDonors.filter((d) => d.available).length
+        
+        setStats((prev) => ({
+          ...prev,
+          activeDonors: donors.length,
+        }))
+        setAvailableDonorCount(availableCount)
+      } catch (error) {
+        console.error("Error refreshing donor stats:", error)
+      }
+    }
+
+    const handleNewRequest = async () => {
+      // Refresh request stats when new request is created
+      try {
+        const requests = await getRequests("Pending")
+        setStats((prev) => ({
+          ...prev,
+          openRequests: requests.length,
+        }))
+      } catch (error) {
+        console.error("Error refreshing request stats:", error)
+      }
+    }
+
+    // Listen for custom events from Socket.IO context
+    window.addEventListener("donor_status_update", handleDonorUpdate)
+    window.addEventListener("new_request", handleNewRequest)
+
+    return () => {
+      window.removeEventListener("donor_status_update", handleDonorUpdate)
+      window.removeEventListener("new_request", handleNewRequest)
+    }
+  }, [])
+
+  // Fetch AI recommendation on mount and auto-refresh every 5 minutes
+  useEffect(() => {
+    const fetchRecommendation = async () => {
+      try {
+        setIsLoadingRecommendation(true)
+        const recommendations = await getAIRecommendation()
+        
+        if (recommendations && recommendations.length > 0) {
+          // Use the top recommendation (first one)
+          setAiRecommendation(recommendations[0])
+        } else {
+          // Fallback if no recommendations
+          setAiRecommendation((prev) => prev || null)
+        }
+      } catch (error) {
+        console.error("Error fetching AI recommendation:", error)
+        // Keep previous recommendation if available, otherwise set to null
+        setAiRecommendation((prev) => prev || null)
+      } finally {
+        setIsLoadingRecommendation(false)
+      }
+    }
+
+    // Fetch immediately on mount
+    fetchRecommendation()
+
+    // Auto-refresh every 5 minutes (300000ms)
+    const refreshInterval = setInterval(() => {
+      fetchRecommendation()
+    }, 5 * 60 * 1000)
+
+    return () => {
+      clearInterval(refreshInterval)
+    }
   }, [])
 
   return (
@@ -90,23 +208,23 @@ export default function Dashboard() {
               <>
                 <StatCard
                   title="Active Donors"
-                  value={156}
+                  value={stats.activeDonors}
                   icon={<HeartPulse className="h-5 w-5 text-white" />}
-                  progress={78}
+                  progress={Math.min(100, (stats.activeDonors / 200) * 100)}
                   delay={0.1}
                 />
                 <StatCard
                   title="Open Requests"
-                  value={24}
+                  value={stats.openRequests}
                   icon={<Hospital className="h-5 w-5 text-white" />}
-                  progress={60}
+                  progress={Math.min(100, (stats.openRequests / 50) * 100)}
                   delay={0.2}
                 />
                 <StatCard
                   title="Upcoming Camps"
-                  value={8}
+                  value={stats.upcomingCamps}
                   icon={<Users className="h-5 w-5 text-white" />}
-                  progress={40}
+                  progress={Math.min(100, (stats.upcomingCamps / 20) * 100)}
                   delay={0.3}
                 />
               </>
@@ -135,7 +253,7 @@ export default function Dashboard() {
                       <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
                       <div>
                         <p className="text-xs font-medium text-muted-foreground">Active Donors</p>
-                        <p className="text-lg font-bold text-foreground">28</p>
+                        <p className="text-lg font-bold text-foreground">{availableDonorCount}</p>
                       </div>
                     </div>
                   </div>
@@ -150,29 +268,66 @@ export default function Dashboard() {
               <Sparkles className="h-5 w-5 text-primary" />
               AI Insights
             </h2>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.5 }}
-            >
+            {isLoadingRecommendation ? (
               <Card className="rounded-2xl border border-border shadow-sm hover:shadow-md transition-shadow">
                 <CardContent className="flex items-start gap-4 p-6">
-                  {/* AI Avatar */}
+                  {/* Shimmer loading skeleton */}
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 shadow-sm">
+                    <Bot className="h-5 w-5 text-primary animate-pulse" />
+                  </div>
+                  <div className="flex-1 space-y-3">
+                    <div className="h-4 w-48 animate-pulse rounded-2xl bg-muted" />
+                    <div className="h-5 w-32 animate-pulse rounded-2xl bg-muted" />
+                    <div className="h-4 w-full animate-pulse rounded-2xl bg-muted" />
+                    <div className="h-4 w-3/4 animate-pulse rounded-2xl bg-muted" />
+                  </div>
+                </CardContent>
+              </Card>
+            ) : aiRecommendation ? (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.5 }}
+              >
+                <Card className="rounded-2xl border border-border shadow-sm hover:shadow-md transition-shadow">
+                  <CardContent className="flex items-start gap-4 p-6">
+                    {/* AI Avatar */}
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 shadow-sm">
+                      <Bot className="h-5 w-5 text-primary" />
+                    </div>
+                    {/* AI Recommendation */}
+                    <div className="flex-1">
+                      <div className="mb-2">
+                        <h3 className="text-sm font-semibold text-foreground">
+                          AI Recommended Camp Area
+                        </h3>
+                      </div>
+                      <div className="mb-2">
+                        <p className="text-lg font-semibold text-primary">
+                          {aiRecommendation.location}
+                        </p>
+                      </div>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {aiRecommendation.reason}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ) : (
+              <Card className="rounded-2xl border border-border shadow-sm hover:shadow-md transition-shadow">
+                <CardContent className="flex items-start gap-4 p-6">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 shadow-sm">
                     <Bot className="h-5 w-5 text-primary" />
                   </div>
-                  {/* AI Message */}
                   <div className="flex-1">
-                    <div className="mb-1">
-                      <span className="text-sm font-medium text-foreground">AI Assistant</span>
-                    </div>
-                    <p className="text-foreground leading-relaxed">
-                      High potential donor activity detected near South Delhi. Consider scheduling a donation camp in this area to maximize engagement.
+                    <p className="text-sm text-muted-foreground">
+                      No recommendation available at this time. Please try again later.
                     </p>
                   </div>
                 </CardContent>
               </Card>
-            </motion.div>
+            )}
           </div>
       </div>
     </PageTransition>
