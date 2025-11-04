@@ -207,12 +207,25 @@ def seed_database():
         inventories = []
         blood_types = ["O+", "A+", "B+", "AB+", "O-", "A-", "B-", "AB-"]
         
+        # Hospital capacity tiers based on typical hospital sizes
+        hospital_tiers = {
+            "Apollo Hospital": {"min": 25, "max": 120},
+            "AIIMS": {"min": 30, "max": 150},  # Largest
+            "Max Hospital": {"min": 25, "max": 120},
+            "Fortis Hospital": {"min": 20, "max": 100},
+            "Safdarjung Hospital": {"min": 30, "max": 140},
+            "BLK Hospital": {"min": 15, "max": 80}
+        }
+        
         for hospital in hospitals:
+            tier = hospital_tiers.get(hospital.name, {"min": 20, "max": 100})
+            
             for blood_type in blood_types:
                 # Random inventory level (some hospitals have shortage, some have surplus)
-                current_units = random.randint(5, 80)
-                min_required = 20
-                max_capacity = 100
+                # Use tier-appropriate values
+                min_required = tier["min"]
+                max_capacity = tier["max"]
+                current_units = random.randint(5, int(max_capacity * 0.8))
                 
                 inventory = InventoryLevel(
                     hospital_id=hospital.id,

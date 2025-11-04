@@ -96,16 +96,15 @@ class BloodRedistributor:
         """
         inventory_status = self.get_inventory_status(blood_type=blood_type)
         
-        # Separate surplus and shortage hospitals
-        surplus_hospitals = [
-            inv for inv in inventory_status 
-            if inv['surplus'] > 0
-        ]
+        # Separate surplus and shortage hospitals in a single pass
+        surplus_hospitals = []
+        shortage_hospitals = []
         
-        shortage_hospitals = [
-            inv for inv in inventory_status 
-            if inv['shortage'] > 0
-        ]
+        for inv in inventory_status:
+            if inv['surplus'] > 0:
+                surplus_hospitals.append(inv)
+            if inv['shortage'] > 0:
+                shortage_hospitals.append(inv)
         
         recommendations = []
         

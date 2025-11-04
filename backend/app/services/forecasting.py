@@ -10,6 +10,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 import joblib
@@ -355,8 +356,35 @@ class BloodDemandForecaster:
         for region in regions:
             for blood_type in blood_types:
                 # Get current inventory for this region/blood type
-                # For demo, we'll use a default value
-                current_inventory = 50  # In production, query from InventoryLevel table
+                # Query from InventoryLevel table for accurate assessment
+                try:
+                    from app.models.models import Hospital
+                    
+                    # Get hospitals in this region
+                    hospitals_in_region = db.query(Hospital).filter(
+                        Hospital.location.like(f"%{region}%")
+                    ).all()
+                    
+                    # Sum inventory across all hospitals in region
+                    current_inventory = 0
+                    if hospitals_in_region:
+                        for hospital in hospitals_in_region:
+                            inventory = db.query(InventoryLevel).filter(
+                                and_(
+                                    InventoryLevel.hospital_id == hospital.id,
+                                    InventoryLevel.blood_type == blood_type
+                                )
+                            ).first()
+                            if inventory:
+                                current_inventory += inventory.current_units
+                    
+                    # Default to 50 if no inventory found (for regions without specific hospitals)
+                    if current_inventory == 0:
+                        current_inventory = 50
+                    
+                except Exception as e:
+                    print(f"⚠️  Could not query inventory, using default: {e}")
+                    current_inventory = 50
                 
                 try:
                     # Make prediction
