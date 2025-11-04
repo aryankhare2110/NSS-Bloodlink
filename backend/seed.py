@@ -199,6 +199,47 @@ def seed_database():
         
         print(f"✅ Created {len(requests)} blood requests")
         
+        # Insert sample inventory levels
+        print("📦 Inserting inventory levels...")
+        from app.models.models import InventoryLevel
+        import random
+        
+        inventories = []
+        blood_types = ["O+", "A+", "B+", "AB+", "O-", "A-", "B-", "AB-"]
+        
+        # Hospital capacity tiers based on typical hospital sizes
+        hospital_tiers = {
+            "Apollo Hospital": {"min": 25, "max": 120},
+            "AIIMS": {"min": 30, "max": 150},  # Largest
+            "Max Hospital": {"min": 25, "max": 120},
+            "Fortis Hospital": {"min": 20, "max": 100},
+            "Safdarjung Hospital": {"min": 30, "max": 140},
+            "BLK Hospital": {"min": 15, "max": 80}
+        }
+        
+        for hospital in hospitals:
+            tier = hospital_tiers.get(hospital.name, {"min": 20, "max": 100})
+            
+            for blood_type in blood_types:
+                # Random inventory level (some hospitals have shortage, some have surplus)
+                # Use tier-appropriate values
+                min_required = tier["min"]
+                max_capacity = tier["max"]
+                current_units = random.randint(5, int(max_capacity * 0.8))
+                
+                inventory = InventoryLevel(
+                    hospital_id=hospital.id,
+                    blood_type=blood_type,
+                    current_units=current_units,
+                    min_required=min_required,
+                    max_capacity=max_capacity
+                )
+                db.add(inventory)
+                inventories.append(inventory)
+        
+        db.commit()
+        print(f"✅ Created {len(inventories)} inventory records")
+        
         print("\n" + "="*50)
         print("✅ Database seeding completed successfully!")
         print("="*50)
@@ -206,6 +247,7 @@ def seed_database():
         print(f"   - Hospitals: {len(hospitals)}")
         print(f"   - Donors: {len(donors)}")
         print(f"   - Requests: {len(requests)}")
+        print(f"   - Inventory records: {len(inventories)}")
         print("\n🚀 You can now start the server and test the API at http://localhost:8000/docs")
         
     except Exception as e:

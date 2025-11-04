@@ -59,12 +59,13 @@ async def health_check():
     return {"status": "healthy"}
 
 # Import and include routers
-from app.routes import donors, requests
+from app.routes import donors, requests, forecasting
 from app.ai.ai_routes import router as ai_router
 
 app.include_router(donors.router, prefix="/donors", tags=["Donors"])
 app.include_router(requests.router, prefix="/requests", tags=["Requests"])
 app.include_router(ai_router, prefix="/ai", tags=["AI"])
+app.include_router(forecasting.router, prefix="/forecasting", tags=["Forecasting"])
 
 # Mount Socket.IO ASGI app at /ws
 app.mount("/ws", socketio_app)
