@@ -2,15 +2,15 @@ import { initializeApp, getApps, type FirebaseApp } from "firebase/app"
 import { getAuth, type Auth } from "firebase/auth"
 import { getMessaging, getToken, onMessage, type Messaging } from "firebase/messaging"
 
-// Dummy Firebase configuration (replace with actual config later)
+// Firebase configuration from environment variables
 const firebaseConfig = {
-  apiKey: "AIzaSyDummy-Key-Replace-With-Actual-Key",
-  authDomain: "nss-bloodlink-dummy.firebaseapp.com",
-  projectId: "nss-bloodlink-dummy",
-  storageBucket: "nss-bloodlink-dummy.appspot.com",
-  messagingSenderId: "123456789012",
-  appId: "1:123456789012:web:dummy-app-id",
-  measurementId: "G-DUMMY12345",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDummy-Key-Replace-With-Actual-Key",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "nss-bloodlink-dummy.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "nss-bloodlink-dummy",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "nss-bloodlink-dummy.appspot.com",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "123456789012",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:123456789012:web:dummy-app-id",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-DUMMY12345",
 }
 
 // VAPID key for web push notifications (dummy - replace with actual key)

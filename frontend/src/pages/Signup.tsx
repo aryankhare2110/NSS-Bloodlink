@@ -44,7 +44,21 @@ export default function Signup() {
       navigate("/")
     } catch (error: any) {
       console.error("Signup error:", error)
-      addToast(error.message || "Failed to create account. Please try again.", "error")
+      
+      // Provide helpful error messages
+      let errorMessage = error.message || "Failed to create account. Please try again."
+      
+      if (error.code === "auth/api-key-not-valid") {
+        errorMessage = "Firebase API key is invalid. Please check your .env file and ensure you have valid Firebase credentials. See FIREBASE_SETUP.md for setup instructions."
+      } else if (error.code === "auth/operation-not-allowed") {
+        errorMessage = "Email/Password authentication is not enabled. Please enable it in Firebase Console → Authentication → Sign-in method."
+      } else if (error.code === "auth/email-already-in-use") {
+        errorMessage = "An account with this email already exists. Please try logging in instead."
+      } else if (error.code === "auth/weak-password") {
+        errorMessage = "Password is too weak. Please use at least 6 characters."
+      }
+      
+      addToast(errorMessage, "error")
     } finally {
       setIsLoading(false)
     }

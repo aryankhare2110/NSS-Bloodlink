@@ -32,7 +32,21 @@ export default function Login() {
       navigate("/")
     } catch (error: any) {
       console.error("Login error:", error)
-      addToast(error.message || "Failed to login. Please check your credentials.", "error")
+      
+      // Provide helpful error messages
+      let errorMessage = error.message || "Failed to login. Please check your credentials."
+      
+      if (error.code === "auth/api-key-not-valid") {
+        errorMessage = "Firebase API key is invalid. Please check your .env file and ensure you have valid Firebase credentials. See FIREBASE_SETUP.md for setup instructions."
+      } else if (error.code === "auth/user-not-found") {
+        errorMessage = "No account found with this email. Please sign up first."
+      } else if (error.code === "auth/wrong-password") {
+        errorMessage = "Incorrect password. Please try again."
+      } else if (error.code === "auth/invalid-email") {
+        errorMessage = "Invalid email address. Please check your email format."
+      }
+      
+      addToast(errorMessage, "error")
     } finally {
       setIsLoading(false)
     }
