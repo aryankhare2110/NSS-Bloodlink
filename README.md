@@ -1,57 +1,123 @@
-# NSS BloodLink — AI-powered Blood Donation Platform
+NSS BloodLink – Smart Blood Donation Network
 
-Problem addressed
-Proactively prevents blood shortages and streamlines redistribution across hospitals and blood banks.
-Core innovations
-ML demand forecasting tuned to region & seasonality.
-Real‑time alerts (Socket.IO + FCM) to mobilize donors fast.
-Forecast‑based redistribution engine to minimize transfers and waste.
-Privacy‑preserving identity handling (hashed last‑4 Aadhaar).
-Measurable benefits
-Fewer stockouts and emergency procurements.
-Faster donor mobilization and reduced response time.
-Improved utilization of existing inventory → lower waste.
-Equity & community impact
-Prioritizes underserved regions; supports rural and resource‑constrained hospitals.
-Empowers volunteers and hospital staff with actionable insights.
-Sustainability & scale
-Modular, low‑cost stack (FastAPI, Postgres, Redis, React) suited for cloud or local deployment.
-Easy to pilot, extend, and integrate with existing health systems.
-Call to action
-Pilot with 2–3 hospitals, measure stockout reduction, scale regionally with local partners.
+NSS BloodLink is a real-time blood donation coordination platform that connects hospitals with nearby eligible blood donors. The system automatically detects donors based on live geolocation, availability, and blood compatibility, and allows hospitals to notify donors instantly via email.
 
+🚀 Key Features
+Feature	Description
+Donor Registration	Donors register with blood type & location.
+Real-time Availability	Donor online/offline status is tracked through Redis GEO.
+Nearby Donor Matching	Hospital requests automatically find closest eligible donors.
+Emergency Notification	Hospitals can notify donors with one click, emails are sent instantly.
+Web Dashboard	Admin UI for monitoring requests, donors, and hospitals.
+Socket.IO Live Updates	New requests and donor status push updates without refresh.
 
-ML & Data
+🧱 System Architecture
+Frontend (React + Vite) 
+        ↓ REST / WebSocket
+Backend (FastAPI + Socket.IO)
+        ↓ SQLAlchemy ORM
+PostgreSQL (Donor & Hospital Data)
+        ↓ Redis GEO + Cache
+Redis (Live Location & Availability)
+        ↓
+SendGrid (Email Notifications)
 
-Upgrade forecasting with ensemble models (XGBoost/LightGBM + deep time‑series) and uncertainty estimates.
-Automated retraining pipeline (scheduled + data‑drift alerts).
-Enrich features: EMR integrations, event feeds (festivals, outbreaks), weather, mobility.
-Product & UX
+📍 How the Workflow Works
+1) Donor Registration
 
-Mobile apps for volunteers (iOS/Android) with offline support and one‑tap confirmations.
-Advanced dashboards: KPI tracking, A/B experiments, model explainability (SHAP).
-Multi‑channel notifications (SMS, WhatsApp, email) and localized messaging.
-Integrations & Ops
+Donor signs up → stored in PostgreSQL.
 
-EMR / HIS connectors and HL7/FHIR adapters for seamless hospital data sync.
-Add Alembic migrations, CI/CD pipelines, containerized deployments (K8s Helm charts).
-Observability: Prometheus, Grafana, Sentry, and end‑to‑end test suites.
-Privacy, Security & Compliance
+Their coordinates (lat, lng) also stored in Redis GEO index.
 
-Harden PII handling: tokenization, key rotation, audit logs, RBAC.
-Compliance readiness: HIPAA/GDPR documentation and data‑processing agreements.
-Scale & Impact
+2) Hospital Creates Blood Request
 
-Multi‑tenant support for region/state rollouts; cost‑aware scheduling of redistribution.
-Partner onboarding playbook and training modules for hospitals & NGOs.
-Quick roadmap (6–18 months)
+Hospital enters required blood type & urgency.
 
-Q1: Retraining pipeline, Alembic + CI, pilot mobile app alpha.
-Q2: Ensemble models + explainability, multi‑channel alerts, EMR connector pilot.
-Q3–Q4: Scalability, compliance audit, regional rollout.
-Speaker note: Prioritize pilots (2–3 hospitals) to validate impact metrics (stockout reduction, donor response time) before broad scaling.
+Request is broadcast live to all staff dashboards via Socket.IO.
 
-GPT-5 mini • 0x
+3) Finding Nearby Donors
+
+When user clicks Notify Donors:
+
+GET /donors/nearby?lat=<hospital_lat>&lng=<hospital_lng>&km=5&blood_group=O+
 
 
+This returns a list sorted by distance + recent activity.
+
+4) Notifying Donors
+
+The frontend sends the list to:
+
+POST /donors/notify
+
+
+Backend loops through donors → sends personalized email via SendGrid:
+
+Dear <name>, A nearby hospital urgently needs <blood_group>. Please help.
+
+✅ Technologies Used
+Layer	Technology
+Frontend	React, Vite, TailwindCSS, Framer Motion, ShadCN UI
+Backend	FastAPI, SQLAlchemy, Socket.IO
+Database	PostgreSQL
+Cache/Geo Index	Redis
+Email Service	SendGrid
+Deployment Ready For	Railway / Render / Vercel / Docker
+🛠 Local Setup
+1) Clone the Project
+git clone https://github.com/<your-repo>/NSS-Bloodlink.git
+cd NSS-Bloodlink
+
+2) Backend Setup
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+
+Create .env:
+
+DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/nss_blood
+REDIS_URL=redis://localhost:6379
+SENDGRID_API_KEY=SG.xxxxxx
+EMAIL_FROM=your_email@gmail.com
+FRONTEND_URL=http://localhost:5173
+
+
+Start backend:
+
+uvicorn app.main:app --reload
+
+3) Redis Setup
+
+Mac:
+
+brew install redis
+redis-server
+
+4) Frontend Setup
+cd frontend
+rm -rf node_modules package-lock.json
+npm install
+npm run dev
+
+🔔 Notify Donors API Example
+Request
+await fetch("http://localhost:8000/donors/notify", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(nearbyDonors),
+});
+
+Response
+{
+  "status": "ok",
+  "notified": 5
+}
+
+🎯 Future Enhancements
+
+SMS & Whatsapp Notifications (Twilio)
+ML-based donor scoring
+Live navigation directions to donation centers
 
