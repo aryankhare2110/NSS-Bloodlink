@@ -8,11 +8,13 @@ import os
 class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://user:password@localhost:5432/nss_blood"
+        "postgresql://neondb_owner:npg_hTFPUH93CkVi@ep-blue-cloud-a1b17dsi-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
     )
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    SENDGRID_API_KEY: Optional[str] = os.getenv("SENDGRID_API_KEY")
+    EMAIL_FROM: Optional[str] = os.getenv("EMAIL_FROM")
     
     class Config:
         env_file = ".env"

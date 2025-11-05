@@ -83,12 +83,12 @@ SAMPLE_DONORS = [
 ]
 
 SAMPLE_HOSPITALS = [
-    {"name": "Apollo Hospital", "location": "Delhi"},
-    {"name": "AIIMS", "location": "Delhi"},
-    {"name": "Max Hospital", "location": "Delhi"},
-    {"name": "Fortis Hospital", "location": "Delhi"},
-    {"name": "Safdarjung Hospital", "location": "Delhi"},
-    {"name": "BLK Hospital", "location": "Delhi"},
+    {"name": "Apollo Hospital", "location": "Delhi", "lat": 28.545, "lng": 77.273},
+    {"name": "AIIMS", "location": "Delhi", "lat": 28.554, "lng": 77.265},
+    {"name": "Max Hospital", "location": "Delhi", "lat": 28.535, "lng": 77.280},
+    {"name": "Fortis Hospital", "location": "Delhi", "lat": 28.550, "lng": 77.270},
+    {"name": "Safdarjung Hospital", "location": "Delhi", "lat": 28.560, "lng": 77.275},
+    {"name": "BLK Hospital", "location": "Delhi", "lat": 28.540, "lng": 77.285},
 ]
 
 SAMPLE_REQUESTS = [
@@ -177,21 +177,24 @@ def seed_database():
         
         print(f"✅ Created {len(donors)} donors")
         
-        # Sync donors to Redis cache
-        print("🔄 Syncing donors to Redis cache...")
+        # Sync donors to Redis cache + GEO index
+        print("🔄 Syncing donors to Redis cache and GEO index...")
         try:
             from app.services.cache import set_donor_availability
+            from app.services.geo import upsert_donor_geo
             for donor in donors:
                 asyncio.run(set_donor_availability(donor.id, donor.available))
-            print(f"✅ Synced {len(donors)} donors to Redis cache")
+                asyncio.run(upsert_donor_geo(donor.id, donor.lat, donor.lng))
+            print(f"✅ Synced {len(donors)} donors to Redis cache and GEO index")
         except Exception as e:
-            print(f"⚠️  Warning: Could not sync to Redis cache: {e}")
-            print("   Continuing without cache sync...")
+            print(f"⚠️  Warning: Could not sync to Redis/Geo: {e}")
+            print("   Continuing without cache/geo sync...")
         
         # Insert requests
         print("🩸 Inserting blood requests...")
         requests = []
-        for request_data in SAMPLE_REQUESTS:
+        for i, request_data in enumerate(SAMPLE_REQUESTS):
+            request_data["hospital_id"] = hospitals[i].id   # <--- ONLY CHANGE
             request = Request(**request_data)
             db.add(request)
             requests.append(request)
@@ -219,4 +222,3 @@ def seed_database():
 if __name__ == "__main__":
     print("🌱 Starting database seeding...")
     seed_database()
-

@@ -256,6 +256,36 @@ export async function getAIRecommendation(): Promise<LocationRecommendation[]> {
   }
 }
 
+// ============ Donor Notifications ==========
+
+export interface NotifyByLocationRequest {
+  lat: number
+  lng: number
+  radius_km?: number
+  blood_group?: string
+}
+
+export interface NotifyByLocationResponse {
+  notified: number
+}
+
+/**
+ * Notify donors near a specific location
+ */
+export async function notifyDonorsByLocation(
+  payload: NotifyByLocationRequest
+): Promise<NotifyByLocationResponse> {
+  try {
+    const response = await api.post<NotifyByLocationResponse>(
+      "/donors/notify/by-location",
+      payload
+    )
+    return response.data
+  } catch (error) {
+    throw new Error("Server unavailable")
+  }
+}
+
 // Export the axios instance for direct use if needed
 export default api
 

@@ -1,257 +1,186 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+# backend/app/routes/donors.py
+from typing import List, Optional, Dict
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
+
 from app.database import get_db
 from app.models.models import Donor
 from app.schemas.schemas import DonorCreate, DonorResponse, DonorUpdate
 from app.realtime import broadcast_donor_status_update
 from app.services.cache import set_donor_availability
-from typing import List
+from app.services.geo import upsert_donor_geo, donors_near
+from app.services.notify import send_email
 
 router = APIRouter()
 
+# ---------- Response models ----------
+class DonorNearResponse(BaseModel):
+    id: int
+    name: str
+    blood_group: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    lat: float
+    lng: float
+    available: bool
+    last_donation_date: Optional[str] = None
+    distance_km: float
+
+class NotifyByLocation(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    km: float = Field(default=5.0, gt=0)
+    fresh_min: int = Field(default=10, gt=0)             # recent location updates window
+    blood_group: Optional[str] = None                    # e.g. "O+"
+    available: Optional[bool] = True                     # default: only available
+    contactable_only: bool = True                        # require email/phone
+    limit: int = Field(default=100, gt=0, le=1000)       # safety cap
+    channels: List[str] = Field(default_factory=lambda: ["email"])  # future: "sms", "whatsapp"
+
+class NotifyResult(BaseModel):
+    requested: int
+    matched: int
+    notified: int
+    channel_counts: Dict[str, int]
+    recipients: List[DonorNearResponse]
+
+# ---------- List all donors ----------
 @router.get(
     "/",
     response_model=List[DonorResponse],
     status_code=status.HTTP_200_OK,
     summary="Get all donors",
-    description="Retrieve a list of all donors in the system. Optionally filter by availability status.",
-    responses={
-        200: {
-            "description": "List of donors retrieved successfully",
-            "content": {
-                "application/json": {
-                    "example": [
-                        {
-                            "id": 1,
-                            "name": "Aryan Kumar",
-                            "blood_group": "A+",
-                            "lat": 28.545,
-                            "lng": 77.273,
-                            "available": True,
-                            "last_donation_date": "2024-01-15T00:00:00",
-                            "created_at": "2024-01-01T10:00:00",
-                            "updated_at": "2024-01-15T10:00:00"
-                        }
-                    ]
-                }
-            }
-        }
-    }
+    description="Retrieve a list of all donors. Optionally filter by availability."
 )
 async def get_donors(
     db: Session = Depends(get_db),
-    available: bool = None
+    available: Optional[bool] = None
 ):
-    """
-    Get list of all donors.
-    
-    **Query Parameters:**
-    - `available` (optional): Filter by availability status (true/false)
-    
-    **Returns:**
-    - List of donor objects with all details including ID, name, blood group, location, and availability status
-    
-    **Example:**
-    - `GET /donors/` - Get all donors
-    - `GET /donors/?available=true` - Get only available donors
-    - `GET /donors/?available=false` - Get only unavailable donors
-    """
     try:
-        query = db.query(Donor)
-        
-        # Filter by availability if provided
+        q = db.query(Donor)
         if available is not None:
-            query = query.filter(Donor.available == available)
-        
-        donors = query.all()
-        
-        return donors
+            q = q.filter(Donor.available == available)
+        return q.all()
     except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
+# ---------- Create donor ----------
 @router.post(
     "/",
     response_model=DonorResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new donor",
-    description="Add a new donor to the database. The donor will be automatically synced to Redis cache.",
-    responses={
-        201: {
-            "description": "Donor created successfully",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "id": 1,
-                        "name": "Aryan Kumar",
-                        "blood_group": "A+",
-                        "lat": 28.545,
-                        "lng": 77.273,
-                        "available": True,
-                        "last_donation_date": None,
-                        "created_at": "2024-01-15T10:00:00",
-                        "updated_at": "2024-01-15T10:00:00"
-                    }
-                }
-            }
-        }
-    }
+    description="Add a new donor and sync to Redis (availability + GEO)."
 )
 async def create_donor(
     donor_data: DonorCreate,
     db: Session = Depends(get_db)
 ):
-    """
-    Add a new donor to the database.
-    
-    **Request Body:**
-    - `name` (required): Donor's full name (max 100 characters)
-    - `blood_group` (required): Blood group in format A+, B-, O+, AB+, etc.
-    - `lat` (required): Latitude coordinate (-90 to 90)
-    - `lng` (required): Longitude coordinate (-180 to 180)
-    - `available` (optional): Whether donor is available (default: True)
-    - `last_donation_date` (optional): Date of last donation (ISO format)
-    
-    **Returns:**
-    - Created donor object with ID, timestamps, and all details
-    
-    **Example Request:**
-    ```json
-    {
-        "name": "Aryan Kumar",
-        "blood_group": "A+",
-        "lat": 28.545,
-        "lng": 77.273,
-        "available": true,
-        "last_donation_date": "2024-01-15T00:00:00"
-    }
-    ```
-    """
     try:
-        # Create new donor instance
         new_donor = Donor(**donor_data.model_dump())
-        
-        # Add to database
         db.add(new_donor)
         db.commit()
         db.refresh(new_donor)
-        
-        # Sync new donor availability to Redis cache
+
+        if new_donor.lat is not None and new_donor.lng is not None:
+            await upsert_donor_geo(new_donor.id, new_donor.lat, new_donor.lng)
         await set_donor_availability(new_donor.id, new_donor.available)
-        
+
         return new_donor
     except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error while creating donor: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Database error while creating donor: {e}")
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
+# ---------- Nearby donors (for UI listing) ----------
+@router.get(
+    "/nearby",
+    response_model=List[DonorNearResponse],
+    summary="Find nearby donors (Redis GEO) with contact info"
+)
+async def donors_nearby(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    km: float = Query(5.0, gt=0),
+    fresh_min: int = Query(10, gt=0),
+    blood_group: Optional[str] = None,
+    available: Optional[bool] = True,
+    contactable_only: bool = True,
+    db: Session = Depends(get_db),
+):
+    try:
+        pairs = await donors_near(lat, lng, km=km, fresh_ms=fresh_min * 60 * 1000)  # [(id, km)]
+        if not pairs:
+            return []
+        id_to_km: Dict[int, float] = dict(pairs)
+        ids = list(id_to_km.keys())
+
+        q = db.query(Donor).filter(Donor.id.in_(ids))
+        if blood_group is not None:
+            q = q.filter(Donor.blood_group == blood_group)
+        if available is not None:
+            q = q.filter(Donor.available == available)
+        if contactable_only:
+            q = q.filter(or_(Donor.email.isnot(None), Donor.phone.isnot(None)))
+
+        donors = q.all()
+        donors.sort(key=lambda d: id_to_km.get(d.id, float("inf")))
+
+        out: List[DonorNearResponse] = []
+        for d in donors:
+            out.append(DonorNearResponse(
+                id=d.id,
+                name=d.name,
+                blood_group=d.blood_group,
+                email=d.email,
+                phone=d.phone,
+                lat=d.lat,
+                lng=d.lng,
+                available=d.available,
+                last_donation_date=d.last_donation_date.isoformat() if d.last_donation_date else None,
+                distance_km=round(id_to_km[d.id], 3),
+            ))
+        return out
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+# ---------- Update donor ----------
 @router.put(
     "/{donor_id}",
     response_model=DonorResponse,
     status_code=status.HTTP_200_OK,
     summary="Update donor information",
-    description="Update donor information, primarily availability status. Changes are synced to Redis cache and broadcast via Socket.IO.",
-    responses={
-        200: {
-            "description": "Donor updated successfully",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "id": 1,
-                        "name": "Aryan Kumar",
-                        "blood_group": "A+",
-                        "lat": 28.545,
-                        "lng": 77.273,
-                        "available": False,
-                        "last_donation_date": "2024-01-15T00:00:00",
-                        "created_at": "2024-01-01T10:00:00",
-                        "updated_at": "2024-01-20T10:00:00"
-                    }
-                }
-            }
-        },
-        404: {
-            "description": "Donor not found",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "detail": "Donor with ID 999 not found"
-                    }
-                }
-            }
-        }
-    }
+    description="Update donor info (availability, coords, etc.). Syncs to Redis and broadcasts via Socket.IO."
 )
-async def update_donor_availability(
+async def update_donor(
     donor_id: int,
     donor_update: DonorUpdate,
     db: Session = Depends(get_db)
 ):
-    """
-    Update donor information, primarily availability status.
-    
-    **Path Parameters:**
-    - `donor_id` (required): ID of the donor to update
-    
-    **Request Body (all fields optional):**
-    - `available`: New availability status (true/false)
-    - `name`: Donor name
-    - `blood_group`: Blood group (A+, B-, O+, etc.)
-    - `lat`: Latitude coordinate
-    - `lng`: Longitude coordinate
-    - `last_donation_date`: Last donation date (ISO format)
-    
-    **Returns:**
-    - Updated donor object with all current information
-    
-    **Example Request:**
-    ```json
-    {
-        "available": false
-    }
-    ```
-    
-    **Note:** Updates are automatically synced to Redis cache and broadcast to all connected clients via Socket.IO.
-    """
     try:
-        # Find donor by ID
         donor = db.query(Donor).filter(Donor.id == donor_id).first()
-        
         if not donor:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Donor with ID {donor_id} not found"
-            )
-        
-        # Update only provided fields
-        update_data = donor_update.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
+            raise HTTPException(status_code=404, detail=f"Donor with ID {donor_id} not found")
+
+        for field, value in donor_update.model_dump(exclude_unset=True).items():
             setattr(donor, field, value)
-        
-        # Commit changes
+
         db.commit()
         db.refresh(donor)
-        
-        # Sync donor availability to Redis cache
+
+        if donor.lat is not None and donor.lng is not None:
+            await upsert_donor_geo(donor.id, donor.lat, donor.lng)
         await set_donor_availability(donor.id, donor.available)
-        
-        # Broadcast donor status update to all connected clients
+
         await broadcast_donor_status_update({
             "id": donor.id,
             "name": donor.name,
@@ -261,19 +190,90 @@ async def update_donor_availability(
             "lat": donor.lat,
             "lng": donor.lng,
         })
-        
         return donor
     except HTTPException:
         raise
     except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error while updating donor: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Database error while updating donor: {e}")
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+# ---------- NEW: Notify donors by location (server-side search + send) ----------
+@router.post(
+    "/notify/by-location",
+    response_model=NotifyResult,
+    summary="Find nearby donors by location and notify them."
+)
+async def notify_by_location(payload: NotifyByLocation, db: Session = Depends(get_db)):
+    # 1) candidate ids by distance+freshness from Redis
+    pairs = await donors_near(
+        payload.lat, payload.lng,
+        km=payload.km,
+        fresh_ms=payload.fresh_min * 60 * 1000
+    )
+    if not pairs:
+        return NotifyResult(requested=0, matched=0, notified=0, channel_counts={}, recipients=[])
+
+    id_to_km: Dict[int, float] = dict(pairs)
+    ids = list(id_to_km.keys())[: payload.limit]
+
+    # 2) load donors from DB + filters
+    q = db.query(Donor).filter(Donor.id.in_(ids))
+    if payload.blood_group is not None:
+        q = q.filter(Donor.blood_group == payload.blood_group)
+    if payload.available is not None:
+        q = q.filter(Donor.available == payload.available)
+    if payload.contactable_only:
+        q = q.filter(or_(Donor.email.isnot(None), Donor.phone.isnot(None)))
+
+    donors = q.all()
+    if not donors:
+        return NotifyResult(requested=len(ids), matched=0, notified=0, channel_counts={}, recipients=[])
+
+    # 3) order by distance + serialize
+    donors.sort(key=lambda d: id_to_km.get(d.id, float("inf")))
+    recipients: List[DonorNearResponse] = []
+    for d in donors:
+        recipients.append(DonorNearResponse(
+            id=d.id,
+            name=d.name,
+            blood_group=d.blood_group,
+            email=d.email,
+            phone=d.phone,
+            lat=d.lat,
+            lng=d.lng,
+            available=d.available,
+            last_donation_date=d.last_donation_date.isoformat() if d.last_donation_date else None,
+            distance_km=round(id_to_km[d.id], 3),
+        ))
+
+    # 4) notify (email channel implemented)
+    notified = 0
+    channel_counts: Dict[str, int] = {ch: 0 for ch in payload.channels}
+    for r in recipients:
+        if "email" in payload.channels and r.email:
+            subject = f"🚨 Urgent need for {r.blood_group} blood nearby"
+            message = (
+                f"Dear {r.name},\n\n"
+                f"A nearby hospital urgently needs {r.blood_group} blood.\n"
+                f"Approx. location: {payload.lat:.3f}, {payload.lng:.3f} (≤ {payload.km} km)\n\n"
+                f"Thank you ❤️\n- NSS BloodLink"
+            )
+            send_email(r.email, subject, message)
+            notified += 1
+            channel_counts["email"] += 1
+
+        # placeholders for future:
+        # if "sms" in payload.channels and r.phone: send_sms(...)
+        # if "whatsapp" in payload.channels and r.phone: send_whatsapp(...)
+
+    # optional: don’t echo back huge lists
+    return NotifyResult(
+        requested=len(ids),
+        matched=len(recipients),
+        notified=notified,
+        channel_counts=channel_counts,
+        recipients=recipients[:50],
+    )

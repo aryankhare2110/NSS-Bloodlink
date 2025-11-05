@@ -1,7 +1,13 @@
-from pydantic import BaseModel, Field
+# backend/app/schemas/schemas.py
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Optional
+
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+
 from app.models.models import UrgencyLevel, RequestStatus
+
 
 # ============ Donor Schemas ============
 
@@ -13,6 +19,9 @@ class DonorBase(BaseModel):
     lng: float = Field(..., ge=-180, le=180, description="Longitude coordinate")
     available: bool = Field(default=True, description="Whether donor is currently available")
     last_donation_date: Optional[datetime] = Field(None, description="Date of last donation")
+    # contact fields
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
 
 class DonorCreate(DonorBase):
     """Schema for creating a donor"""
@@ -26,15 +35,17 @@ class DonorUpdate(BaseModel):
     lng: Optional[float] = Field(None, ge=-180, le=180)
     available: Optional[bool] = None
     last_donation_date: Optional[datetime] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
 
 class DonorResponse(DonorBase):
     """Schema for reading a donor"""
     id: int
     created_at: datetime
     updated_at: datetime
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 # ============ Hospital Schemas ============
 
@@ -42,6 +53,8 @@ class HospitalBase(BaseModel):
     """Base hospital schema"""
     name: str = Field(..., min_length=1, max_length=200, description="Hospital name")
     location: str = Field(..., min_length=1, max_length=200, description="Hospital location")
+    lat: Optional[float] = Field(None, ge=-90, le=90, description="Latitude")
+    lng: Optional[float] = Field(None, ge=-180, le=180, description="Longitude")
 
 class HospitalCreate(HospitalBase):
     """Schema for creating a hospital"""
@@ -51,15 +64,17 @@ class HospitalUpdate(BaseModel):
     """Schema for updating a hospital"""
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     location: Optional[str] = Field(None, min_length=1, max_length=200)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lng: Optional[float] = Field(None, ge=-180, le=180)
 
 class HospitalResponse(HospitalBase):
     """Schema for reading a hospital"""
     id: int
     created_at: datetime
     updated_at: datetime
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 # ============ Request Schemas ============
 
@@ -88,17 +103,15 @@ class RequestResponse(RequestBase):
     donor_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
-    hospital: Optional[HospitalResponse] = None  # Include hospital details if loaded
-    
-    class Config:
-        from_attributes = True
+    hospital: Optional["HospitalResponse"] = None  # include hospital details if loaded
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 # ============ Request with Hospital Details ============
 
 class RequestWithHospital(RequestResponse):
     """Request schema with hospital information included"""
     hospital: HospitalResponse
-    
-    class Config:
-        from_attributes = True
 
+    model_config = ConfigDict(from_attributes=True)

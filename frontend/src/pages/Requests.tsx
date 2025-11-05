@@ -22,7 +22,7 @@ import { Select } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast"
 import { PageTransition } from "@/components/PageTransition"
 import { Badge } from "@/components/ui/badge"
-import { getRequests, postRequest, type Request as APIRequest } from "@/services/api"
+import { getRequests, postRequest, notifyDonorsByLocation, type Request as APIRequest } from "@/services/api"
 
 interface Request {
   id: number
@@ -30,6 +30,11 @@ interface Request {
   bloodGroup: string
   urgency: "Low" | "Medium" | "High" | "Critical"
   location: string
+  // Optional: latitude/longitude if available from API
+  location_lat?: number
+  location_lng?: number
+  // Keep original API request when available for advanced actions
+  apiRequest?: APIRequest
 }
 
 const getUrgencyBadge = (urgency: string) => {
@@ -64,6 +69,8 @@ export default function Requests() {
           bloodGroup: req.blood_type,
           urgency: req.urgency,
           location: req.hospital?.location || "Unknown",
+          // Attach original request for later use (e.g., notifying donors)
+          apiRequest: req,
         }))
         
         setRequests(transformedRequests)
@@ -164,8 +171,51 @@ export default function Requests() {
     }
   }, [addToast])
 
-  const handleNotifyDonors = () => {
-    addToast("Alert sent to matching donors.", "success")
+  const handleNotifyDonors = async (request: Request) => {
+    try {
+      // Determine coordinates: prefer explicit fields, then fall back to attached apiRequest if available
+      let lat = request.location_lat
+      let lng = request.location_lng
+
+      if (lat === undefined || lng === undefined || lat === null || lng === null) {
+        const latInput = window.prompt("Enter hospital latitude (e.g., 28.6139)")
+        const lngInput = window.prompt("Enter hospital longitude (e.g., 77.2090)")
+        if (!latInput || !lngInput) {
+          addToast("Coordinates required to find nearby donors.", "info")
+          return
+        }
+        const parsedLat = parseFloat(latInput)
+        const parsedLng = parseFloat(lngInput)
+        if (
+          Number.isNaN(parsedLat) ||
+          Number.isNaN(parsedLng) ||
+          parsedLat < -90 || parsedLat > 90 ||
+          parsedLng < -180 || parsedLng > 180
+        ) {
+          addToast("Invalid coordinates provided.", "error")
+          return
+        }
+        lat = parsedLat
+        lng = parsedLng
+      }
+
+      // Notify donors via backend endpoint using lat/lng
+      const result = await notifyDonorsByLocation({
+        lat,
+        lng,
+        blood_group: request.bloodGroup,
+      })
+
+      const count = typeof result?.notified === "number" ? result.notified : 0
+      if (count === 0) {
+        addToast("No eligible donors found nearby.", "info")
+      } else {
+        addToast(`✅ Notified ${count} donors`, "success")
+      }
+    } catch (err) {
+      console.error(err)
+      addToast("Failed to notify donors.", "error")
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -271,7 +321,7 @@ export default function Requests() {
                   
                   <CardFooter className="p-6 pt-0">
                     <Button
-                      onClick={handleNotifyDonors}
+                      onClick={() => handleNotifyDonors(request)}
                       className="w-full focus:ring-2 focus:ring-red-500 focus:ring-offset-2 hover:animate-pulse hover:shadow-lg transition-all"
                     >
                       <Bell className="mr-2 h-5 w-5" />
